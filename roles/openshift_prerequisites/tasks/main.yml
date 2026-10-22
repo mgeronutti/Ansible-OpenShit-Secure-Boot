@@ -11,19 +11,41 @@
 #   3. OpenShift Virtualization (KubeVirt) instalado no cluster
 # =============================================================================
 
+# Descobre de onde vem o endereço da API, na mesma ordem usada pelos módulos:
+#   1. variável openshift_api_url (execução local com URL + token)
+#   2. variável de ambiente K8S_AUTH_HOST (credencial do AAP)
+#   3. kubeconfig (execução local com "oc login") -> endereço desconhecido aqui
+- name: Prerequisitos | Identificar o endereço da API
+  ansible.builtin.set_fact:
+    openshift_prerequisites_api_url: >-
+      {{ openshift_api_url | default('', true) or lookup('ansible.builtin.env', 'K8S_AUTH_HOST') }}
+    openshift_prerequisites_source: >-
+      {{ 'variável openshift_api_url' if (openshift_api_url | default('', true))
+         else ('credencial do AAP (K8S_AUTH_HOST)' if lookup('ansible.builtin.env', 'K8S_AUTH_HOST')
+               else 'kubeconfig (oc login)') }}
+
 - name: Prerequisitos | Exibir o destino da conexão
   ansible.builtin.debug:
-    msg: >-
-      Conectando em:
-      {{ openshift_api_url if (openshift_api_url | default('', true))
-         else (lookup('ansible.builtin.env', 'K8S_AUTH_HOST') ~ ' (credencial do AAP)'
-               if lookup('ansible.builtin.env', 'K8S_AUTH_HOST')
-               else 'contexto atual do kubeconfig (oc login)') }}
+    msg: "Conectando em: {{ openshift_prerequisites_api_url or '(definido no kubeconfig)' }} | origem: {{ openshift_prerequisites_source }}"
+
+# Pega erros de cadastro ANTES de tentar conectar: URL de exemplo copiada da
+# documentação (ex.: https://api.<cluster>:6443), sem https:// ou com espaços.
+- name: Prerequisitos | Validar o formato do endereço da API
+  ansible.builtin.assert:
+    that:
+      - openshift_prerequisites_api_url is match('^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$')
+    fail_msg:
+      - "Endereço da API inválido: '{{ openshift_prerequisites_api_url }}' (origem: {{ openshift_prerequisites_source }})."
+      - "{{ 'O endereço ainda contém o texto de EXEMPLO da documentação (<...>). Troque pelo endereço real do cluster.' if '<' in openshift_prerequisites_api_url or '>' in openshift_prerequisites_api_url else 'Formato esperado: https://api.<nome-do-cluster>.<dominio>:6443' }}"
+      - "Para descobrir o endereço correto, rode em uma máquina com acesso ao cluster: oc whoami --show-server"
+      - "No AAP, corrija o campo 'OpenShift or Kubernetes API Endpoint' da credencial."
+    quiet: true
+  when: openshift_prerequisites_api_url | length > 0
 
 # k8s_cluster_info faz a "descoberta" da API: conecta, autentica e lista
 # todos os tipos de recurso disponíveis. É uma chamada somente-leitura, ideal
 # para validar a conexão. O block/rescue troca a mensagem de erro técnica do
-# módulo por uma orientação clara ao analista.
+# módulo (ex.: "MODULE FAILURE" + traceback Python) por um diagnóstico.
 - name: Prerequisitos | Testar conexão e autenticação com o cluster
   block:
     - name: Prerequisitos | Consultar informações do cluster
@@ -31,15 +53,42 @@
       register: openshift_prerequisites_cluster
 
   rescue:
+    # Junta todas as partes do erro (mensagem, stderr e exceção) em um texto
+    # só, para procurar as assinaturas dos problemas mais comuns.
+    - name: Prerequisitos | Analisar o erro de conexão
+      ansible.builtin.set_fact:
+        openshift_prerequisites_error: >-
+          {{ [ansible_failed_result.msg | default(''),
+              ansible_failed_result.module_stderr | default(''),
+              ansible_failed_result.exception | default('')] | join(' ') }}
+
+    - name: Prerequisitos | Classificar a causa da falha
+      ansible.builtin.set_fact:
+        openshift_prerequisites_diagnosis: >-
+          {% set e = openshift_prerequisites_error %}
+          {% if e is search('NameResolutionError|Name or service not known|nodename nor servname|Temporary failure in name resolution|getaddrinfo failed') %}
+          DNS: o nome do servidor da API não foi encontrado a partir do Execution Environment. Confira se o endereço está correto (oc whoami --show-server). Se estiver, o DNS do nó de execução do AAP não resolve esse nome: teste no nó com "getent hosts <nome-da-api>" e peça a inclusão no DNS (ou /etc/hosts do nó de execução).
+          {% elif e is search('CERTIFICATE_VERIFY_FAILED|certificate verify failed|SSLError') %}
+          CERTIFICADO: o certificado da API não é confiável para o EE. Preencha 'Certificate Authority data' na credencial com a CA do cluster (oc get cm kube-root-ca.crt -n default -o jsonpath='{.data.ca\.crt}').
+          {% elif e is search('Unauthorized|\\b401\\b') %}
+          TOKEN: a API recusou o token (inválido ou expirado). Gere outro com "oc create token ansible-secureboot -n ansible-automation --duration=8760h" e atualize a credencial.
+          {% elif e is search('Forbidden|\\b403\\b') %}
+          PERMISSÃO: o token é válido, mas a ServiceAccount não tem permissão. Aplique files/rbac-secureboot.yml.
+          {% elif e is search('Connection refused|timed out|ConnectTimeout|No route to host|Network is unreachable') %}
+          REDE: o nome foi resolvido, mas a porta da API não respondeu. Verifique firewall/proxy entre o nó de execução do AAP e o cluster (porta 6443).
+          {% elif e is search('Failed to import|No module named .?kubernetes') %}
+          EXECUTION ENVIRONMENT: falta a biblioteca Python kubernetes no EE. Use um EE com kubernetes.core (veja execution-environment.yml).
+          {% else %}
+          Causa não identificada automaticamente. Execute o job com Verbosity 3 (-vvv) e veja o traceback completo.
+          {% endif %}
+
     - name: Prerequisitos | Falha ao conectar no OpenShift
       ansible.builtin.fail:
         msg:
           - "Não foi possível conectar na API do OpenShift."
-          - "Erro retornado: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
-          - "Verifique:"
-          - " - AAP: credencial 'OpenShift or Kubernetes API Bearer Token' associada ao Job Template (URL, token, Verify SSL/CA)"
-          - " - AAP: Execution Environment com kubernetes.core e a biblioteca Python kubernetes"
-          - " - Local: pip install -r requirements.txt e sessão ativa (oc whoami)"
+          - "Endereço: {{ openshift_prerequisites_api_url or '(kubeconfig)' }} | origem: {{ openshift_prerequisites_source }}"
+          - "Diagnóstico: {{ openshift_prerequisites_diagnosis | trim }}"
+          - "Erro técnico: {{ (openshift_prerequisites_error | trim | split('\n') | select | list | last | default(''))[:400] }}"
 
 - name: Prerequisitos | Exibir versão do cluster
   ansible.builtin.debug:

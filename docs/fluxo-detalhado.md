@@ -188,8 +188,11 @@ Usados em execução **local** ou quando o AAP importa o inventário do projeto
 
 | Tarefa | O que faz |
 |---|---|
-| `Exibir o destino da conexão` | Informa se vai usar a URL configurada ou o kubeconfig |
-| `Consultar informações do cluster` | `k8s_cluster_info`: conecta, autentica e lista as APIs. Dentro de `block/rescue`, para trocar o erro técnico por uma mensagem com o que verificar |
+| `Identificar o endereço da API` | Descobre a URL e de onde ela veio: variável `openshift_api_url`, credencial do AAP (`K8S_AUTH_HOST`) ou kubeconfig |
+| `Exibir o destino da conexão` | Mostra a URL e a origem dela |
+| `Validar o formato do endereço da API` | Antes de conectar, recusa URLs sem `https://` ou que ainda tenham o texto de exemplo (`api.<cluster>`) |
+| `Consultar informações do cluster` | `k8s_cluster_info`: conecta, autentica e lista as APIs. Dentro de `block/rescue` |
+| `Analisar o erro` / `Classificar a causa` (rescue) | Procura no erro técnico as assinaturas de problemas conhecidos e mostra um **diagnóstico** com a correção: DNS, CERTIFICADO, TOKEN, PERMISSÃO, REDE ou EXECUTION ENVIRONMENT |
 | `Exibir versão do cluster` | Confirmação visual da conexão |
 | `Confirmar que o OpenShift Virtualization está disponível` | Procura o tipo `VirtualMachine` na API `kubevirt.io/v1` |
 

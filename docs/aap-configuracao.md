@@ -60,7 +60,7 @@ Na sincronização, o AAP instala as collections listadas em
 |---|---|
 | Name | `OpenShift PRD - ansible-secureboot` |
 | Credential type | **OpenShift or Kubernetes API Bearer Token** |
-| OpenShift or Kubernetes API Endpoint | `https://api.<cluster>:6443` |
+| OpenShift or Kubernetes API Endpoint | Endereço **real** da API, ex.: `https://api.ocp-prd.empresa.local:6443`. Obtenha com `oc whoami --show-server`. ⚠️ Não use o texto de exemplo `api.<cluster>` |
 | API authentication bearer token | token gerado no passo 1 |
 | Verify SSL | ✅ marcado |
 | Certificate Authority data | CA da API, se o certificado não for de uma CA pública. Obtenha com `oc get cm kube-root-ca.crt -n default -o jsonpath='{.data.ca\.crt}'` |
@@ -188,7 +188,11 @@ não editar o template, o projeto ou a credencial (o token nunca fica visível).
 |---|---|
 | `couldn't resolve module/action 'kubernetes.core.k8s_info'` | O EE não tem a collection e o projeto não sincronizou `collections/requirements.yml` |
 | `Failed to import the required Python library (kubernetes)` | O EE não tem a biblioteca Python. Construa o EE do passo 4 |
-| `Não foi possível conectar na API do OpenShift` | Credencial não associada ao template, token expirado ou nó de execução sem rota para a porta 6443 |
+| `Endereço da API inválido ... texto de EXEMPLO` | O campo *API Endpoint* da credencial ainda contém `https://api.<cluster>:6443`. Troque pelo resultado de `oc whoami --show-server` |
+| `Diagnóstico: DNS` (`NameResolutionError`, `Name or service not known`) | O nó de execução do AAP não resolve o nome da API. Teste no nó com `getent hosts api.<seu-cluster>`. Corrija o DNS do nó ou adicione o nome ao `/etc/hosts` dele (o container do EE herda esse arquivo). No AAP sobre OpenShift, o DNS é o do cluster onde o AAP roda |
+| `Diagnóstico: REDE` (`Connection refused`, `timed out`) | Firewall ou proxy entre o nó de execução e a porta 6443 do cluster |
+| `Diagnóstico: TOKEN` (`401 Unauthorized`) | Token inválido ou expirado. Gere outro e atualize a credencial |
+| `Não foi possível conectar na API do OpenShift` (outros casos) | Credencial não associada ao template. Execute o job com *Verbosity* 3 para ver o traceback completo |
 | `certificate verify failed` | Preencha *Certificate Authority data* na credencial |
 | `Forbidden` / `VM ... não encontrada` | A ServiceAccount não tem permissão no namespace da VM (veja `files/rbac-secureboot.yml`) |
 | Job encerrado por timeout | Aumente o *Timeout* do Job Template e/ou `secureboot_wait_timeout` |
