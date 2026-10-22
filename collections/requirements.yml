@@ -1,0 +1,9 @@
+---
+# Collections Ansible necessárias.
+# Este caminho (collections/requirements.yml) é o que o Ansible Automation
+# Platform lê na sincronização do Projeto para instalar as collections.
+# Instalação local: ansible-galaxy collection install -r collections/requirements.yml
+collections:
+  # Módulos k8s / k8s_info / k8s_cluster_info usados para falar com a API do OpenShift
+  - name: kubernetes.core
+    version: ">=3.0.0"

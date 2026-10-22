@@ -1,0 +1,73 @@
+---
+# =============================================================================
+# Etapa 3 - Alterar o Secure Boot
+# -----------------------------------------------------------------------------
+# Neste ponto a VM está desligada (ou já estava desligada desde o início).
+#
+# Regras do OpenShift Virtualization:
+#   - Secure Boot exige firmware EFI. VMs BIOS são recusadas ainda na
+#     etapa 1 (gather_state.yml), antes de a VM ser desligada.
+#   - Secure Boot ATIVO exige o recurso SMM (System Management Mode)
+#     habilitado; sem ele a API rejeita a alteração. Por isso, ao ativar,
+#     também gravamos features.smm.enabled=true. Ao desativar, o SMM é
+#     mantido como está (não atrapalha o boot).
+# =============================================================================
+
+# Montamos o trecho que será enviado à API:
+#   - efi: copiamos a configuração EFI atual (ex.: "persistent: true", que
+#     guarda as variáveis EFI/TPM do Windows) e trocamos só o secureBoot.
+#     Isso é importante para VMs que herdavam o EFI da preference: ao gravar
+#     o EFI na VM, nenhum outro ajuste herdado é perdido.
+#   - features.smm: incluído apenas quando estamos ATIVANDO.
+- name: Configurar | Montar a alteração do firmware
+  ansible.builtin.set_fact:
+    secureboot_domain_patch: >-
+      {{ {'firmware': {'bootloader': {'efi': secureboot_current_efi | combine({'secureBoot': common_secureboot_desired | bool})}}}
+         | combine({'features': {'smm': {'enabled': true}}} if common_secureboot_desired | bool else {}) }}
+
+- name: Configurar | Exibir o que será gravado em spec.template.spec.domain
+  ansible.builtin.debug:
+    var: secureboot_domain_patch
+
+# Envia o patch. "diff" mostra no terminal o antes/depois quando o playbook
+# é executado com --diff.
+- name: Configurar | Gravar o novo valor de Secure Boot na VM
+  kubernetes.core.k8s:
+    state: patched
+    merge_type: merge
+    definition:
+      apiVersion: "{{ secureboot_kubevirt_api }}"
+      kind: VirtualMachine
+      metadata:
+        name: "{{ common_vm_name }}"
+        namespace: "{{ secureboot_vm_namespace }}"
+      spec:
+        template:
+          spec:
+            domain: "{{ secureboot_domain_patch }}"
+  register: secureboot_patch_result
+
+# Lê a VM de novo, direto do cluster, e confirma que o valor gravado é o
+# esperado. Assim temos certeza de que nenhum webhook/operador reverteu a
+# alteração.
+- name: Configurar | Reler a VM para conferir a alteração
+  kubernetes.core.k8s_info:
+    api_version: "{{ secureboot_kubevirt_api }}"
+    kind: VirtualMachine
+    name: "{{ common_vm_name }}"
+    namespace: "{{ secureboot_vm_namespace }}"
+  register: secureboot_vm_after
+  when: not ansible_check_mode
+
+- name: Configurar | Validar o Secure Boot gravado
+  ansible.builtin.assert:
+    that:
+      - (secureboot_saved_efi.secureBoot | default(true) | bool) == (common_secureboot_desired | bool)
+    fail_msg: "O valor de Secure Boot lido após a alteração não corresponde ao solicitado."
+    success_msg: >-
+      Secure Boot {{ 'ATIVADO' if common_secureboot_desired | bool else 'DESATIVADO' }}
+      na configuração da VM.
+  vars:
+    secureboot_saved_efi: >-
+      {{ secureboot_vm_after.resources[0].spec.template.spec.domain.firmware.bootloader.efi | default({}, true) }}
+  when: not ansible_check_mode

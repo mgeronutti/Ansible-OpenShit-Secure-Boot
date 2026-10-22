@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: mgeronutti
+  description: Resolve a VM alvo e valida os parâmetros informados pelo analista
+  license: MIT-0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: GenericLinux
+      versions:
+        - all
+  galaxy_tags:
+    - openshift
+    - kubevirt
+    - secureboot
+
+dependencies: []

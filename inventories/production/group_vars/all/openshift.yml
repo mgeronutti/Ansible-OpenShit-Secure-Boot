@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# Conexão com a API do OpenShift (ambiente de PRODUÇÃO)
+# =============================================================================
+# No ANSIBLE AUTOMATION PLATFORM (forma oficial de execução):
+#   Não preencha nada aqui. A conexão vem da credencial do tipo
+#   "OpenShift or Kubernetes API Bearer Token" associada ao Job Template.
+#   Ela entrega URL, token e certificado ao playbook por variáveis de
+#   ambiente (K8S_AUTH_*). Qualquer valor definido aqui teria prioridade
+#   sobre a credencial.
+#
+# Em EXECUÇÃO LOCAL (testes), há duas opções:
+#   1) "oc login https://api.<cluster>:6443" e deixar tudo vazio
+#      (os módulos usam o ~/.kube/config)
+#   2) Preencher openshift_api_url e o token em vault.yml (ansible-vault),
+#      conforme vault.yml.example
+#
+# Os valores abaixo são aplicados a TODOS os módulos kubernetes.core.* pelo
+# bloco "module_defaults" do playbook. Vazio/indefinido = não enviado.
+
+# Ex.: https://api.cluster-prd.empresa.local:6443  (vazio = credencial AAP / kubeconfig)
+openshift_api_url: ""
+
+# Token de acesso. Nunca coloque o token em texto puro aqui.
+openshift_api_key: "{{ vault_openshift_api_key | default('') }}"
+
+# Validação do certificado TLS da API. Por padrão é feita (true).
+# Só descomente para desativar em laboratório com certificado autoassinado.
+# No AAP, use o campo "Verify SSL" / "Certificate Authority data" da credencial.
+# openshift_validate_certs: false

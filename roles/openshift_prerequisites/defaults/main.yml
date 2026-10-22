@@ -1,0 +1,4 @@
+---
+# Esta role não define valores padrão próprios.
+# Os parâmetros (vm_name, vm_namespace, secureboot_action, openshift_*)
+# ficam em inventories/<ambiente>/group_vars/all/.

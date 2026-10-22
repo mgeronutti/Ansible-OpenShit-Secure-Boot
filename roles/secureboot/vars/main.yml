@@ -1,0 +1,15 @@
+---
+# =============================================================================
+# Constantes internas da role (não devem ser alteradas pelo analista)
+# =============================================================================
+
+# Versão da API do OpenShift Virtualization para VirtualMachine e
+# VirtualMachineInstance.
+secureboot_kubevirt_api: kubevirt.io/v1
+
+# Versão da API de "preferences" (instancetypes). VMs criadas pelo console a
+# partir de InstanceType herdam o firmware (EFI/Secure Boot) daqui.
+secureboot_preference_api: instancetype.kubevirt.io/v1beta1
+
+# Número de tentativas das esperas = timeout / intervalo (arredondado p/ cima)
+secureboot_wait_retries: "{{ ((secureboot_wait_timeout | int) / (secureboot_wait_delay | int)) | round(0, 'ceil') | int }}"

@@ -1,0 +1,12 @@
+- name: Teste inicial do Ansible 
+  hosts: localhost 
+  connection: local 
+  gather_facts: true
+  
+  tasks:
+  - name: Exibir mensagem de sucesso 
+    ansible.builtin.debug: 
+      msg: "Ansible funcionando corretamente no Debian 13!"
+  - name: Exibir sistema operacional 
+    ansible.builtin.debug: 
+      msg: "Sistema: {{ ansible_distribution }} {{ ansible_distribution_version }}"

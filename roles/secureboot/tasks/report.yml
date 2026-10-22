@@ -1,0 +1,18 @@
+---
+# =============================================================================
+# Etapa 5 - Resumo final
+# -----------------------------------------------------------------------------
+# Mostra em um único bloco o que aconteceu. No AAP, fica registrado na
+# saída do job (Automation Execution > Jobs), junto com quem executou e os
+# parâmetros informados no survey.
+# =============================================================================
+
+- name: Resumo | Resultado da execução
+  ansible.builtin.debug:
+    msg:
+      - "VM ................: {{ secureboot_vm_namespace }}/{{ common_vm_name }}"
+      - "Ação solicitada ...: {{ 'ATIVAR' if common_secureboot_desired | bool else 'DESATIVAR' }} Secure Boot"
+      - "Secure Boot antes .: {{ 'ATIVADO' if secureboot_current_enabled | bool else 'DESATIVADO' }}"
+      - "Secure Boot agora .: {{ 'ATIVADO' if common_secureboot_desired | bool else 'DESATIVADO' }}"
+      - "Alterado ..........: {{ 'SIM' if secureboot_change_required | bool else 'NÃO (já estava no estado desejado)' }}"
+      - "Energia ...........: {{ ('estava ligada, foi desligada e religada' if secureboot_change_required | bool else 'estava ligada, não foi tocada') if secureboot_vm_was_running | bool else 'estava desligada e continua desligada' }}"

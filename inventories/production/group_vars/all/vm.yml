@@ -1,0 +1,19 @@
+---
+# =============================================================================
+# Parâmetros da execução (podem ser sobrescritos com -e na linha de comando)
+# =============================================================================
+
+# Nome da VM no OpenShift.
+# Futuramente virá de um sistema interno (ver roles/common/tasks/main.yml);
+# por enquanto é fixo.
+vm_name: "win11-amber-heron-89"
+
+# Namespace (projeto) onde a VM está.
+# Vazio = o playbook procura a VM pelo nome em todos os namespaces
+# (exige permissão de leitura de VMs em todo o cluster).
+vm_namespace: ""
+
+# Ação escolhida pelo analista: "enable" (ativar) ou "disable" (desativar).
+# Propositalmente vazio: o analista SEMPRE precisa informar, por exemplo:
+#   ansible-playbook playbooks/secureboot.yml -e secureboot_action=enable
+secureboot_action: ""

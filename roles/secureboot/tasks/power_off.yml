@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# Etapa 2 - Desligar a VM
+# -----------------------------------------------------------------------------
+# Só é chamada quando a VM estava ligada (ver main.yml).
+#
+# Por que desligar? O firmware é lido apenas quando a máquina inicia. Alterar
+# o Secure Boot com a VM ligada não teria efeito até o próximo boot.
+#
+# Como desligar: mudamos o campo de energia da VM para "desligada" e o
+# OpenShift faz o resto: envia um desligamento ACPI ao Windows (como apertar
+# o botão de energia uma vez), espera o sistema encerrar e só força o
+# desligamento se terminationGracePeriodSeconds expirar.
+#
+# Usamos "state: patched" + "merge_type: merge" (JSON Merge Patch): apenas os
+# campos informados em "definition" são alterados; o resto da VM fica igual.
+# =============================================================================
+
+- name: Desligar | Solicitar desligamento via spec.running=false (formato antigo)
+  kubernetes.core.k8s:
+    state: patched
+    merge_type: merge
+    definition:
+      apiVersion: "{{ secureboot_kubevirt_api }}"
+      kind: VirtualMachine
+      metadata:
+        name: "{{ common_vm_name }}"
+        namespace: "{{ secureboot_vm_namespace }}"
+      spec:
+        running: false
+  when: secureboot_uses_running_field | bool
+
+- name: Desligar | Solicitar desligamento via runStrategy=Halted
+  kubernetes.core.k8s:
+    state: patched
+    merge_type: merge
+    definition:
+      apiVersion: "{{ secureboot_kubevirt_api }}"
+      kind: VirtualMachine
+      metadata:
+        name: "{{ common_vm_name }}"
+        namespace: "{{ secureboot_vm_namespace }}"
+      spec:
+        runStrategy: Halted
+  when: not secureboot_uses_running_field | bool
+
+# Consulta a VMI a cada secureboot_wait_delay segundos até ela deixar de
+# existir (= VM totalmente desligada). Se passar de secureboot_wait_timeout,
+# a tarefa falha e o "rescue" do main.yml religa a VM.
+# Em modo --check nada foi desligado de verdade, então a espera é pulada.
+- name: Desligar | Aguardar a VM desligar (até {{ secureboot_wait_timeout }}s)
+  kubernetes.core.k8s_info:
+    api_version: "{{ secureboot_kubevirt_api }}"
+    kind: VirtualMachineInstance
+    name: "{{ common_vm_name }}"
+    namespace: "{{ secureboot_vm_namespace }}"
+  register: secureboot_vmi_wait
+  until: secureboot_vmi_wait.resources | length == 0
+  retries: "{{ secureboot_wait_retries }}"
+  delay: "{{ secureboot_wait_delay }}"
+  when: not ansible_check_mode
+
+- name: Desligar | VM desligada
+  ansible.builtin.debug:
+    msg: "VM {{ secureboot_vm_namespace }}/{{ common_vm_name }} desligada."

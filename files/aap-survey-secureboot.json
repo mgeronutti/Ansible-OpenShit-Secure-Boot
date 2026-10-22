@@ -1,0 +1,35 @@
+{
+  "name": "Secure Boot de VM",
+  "description": "Ativar ou desativar o Secure Boot de uma VM do OpenShift Virtualization",
+  "spec": [
+    {
+      "question_name": "Ação de Secure Boot",
+      "question_description": "enable = ativar / disable = desativar. Se a VM estiver ligada, ela será desligada e religada.",
+      "required": true,
+      "type": "multiplechoice",
+      "variable": "secureboot_action",
+      "choices": ["enable", "disable"],
+      "default": ""
+    },
+    {
+      "question_name": "Nome da VM",
+      "question_description": "Nome da VirtualMachine no OpenShift",
+      "required": true,
+      "type": "text",
+      "variable": "vm_name",
+      "min": 1,
+      "max": 63,
+      "default": "win11-amber-heron-89"
+    },
+    {
+      "question_name": "Namespace da VM",
+      "question_description": "Projeto/namespace da VM. Deixe vazio para procurar em todos os namespaces.",
+      "required": false,
+      "type": "text",
+      "variable": "vm_namespace",
+      "min": 0,
+      "max": 63,
+      "default": ""
+    }
+  ]
+}

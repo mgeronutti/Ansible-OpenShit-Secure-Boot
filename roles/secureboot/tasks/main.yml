@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# Role: secureboot - orquestração
+# -----------------------------------------------------------------------------
+# Este arquivo só define a ORDEM das etapas. A lógica de cada etapa está no
+# arquivo indicado:
+#
+#   gather_state.yml  -> lê a VM e descobre: está ligada? Secure Boot atual?
+#   power_off.yml     -> desliga a VM (somente se estava ligada)
+#   configure.yml     -> grava o novo valor de Secure Boot na VM
+#   power_on.yml      -> religa a VM (somente se estava ligada antes)
+#   report.yml        -> resumo final
+#
+# Regra de segurança: se o Secure Boot JÁ estiver no estado pedido, nada é
+# feito (a VM não é desligada à toa).
+# =============================================================================
+
+- name: Secure Boot | Levantar o estado atual da VM
+  ansible.builtin.import_tasks: gather_state.yml
+
+- name: Secure Boot | Nenhuma alteração necessária
+  ansible.builtin.debug:
+    msg: >-
+      O Secure Boot da VM {{ common_vm_name }} já está
+      {{ 'ATIVADO' if secureboot_current_enabled | bool else 'DESATIVADO' }}.
+      A VM não será desligada nem alterada.
+  when: not secureboot_change_required | bool
+
+# O block agrupa as etapas que alteram a VM. Se QUALQUER uma falhar depois
+# que a VM foi desligada, o "rescue" tenta religá-la, para que uma falha na
+# automação não deixe um servidor que estava em produção fora do ar.
+- name: Secure Boot | Aplicar a alteração
+  when: secureboot_change_required | bool
+  block:
+    - name: Secure Boot | Desligar a VM (estava ligada)
+      ansible.builtin.include_tasks: power_off.yml
+      when: secureboot_vm_was_running | bool
+
+    - name: Secure Boot | Alterar a configuração de Secure Boot
+      ansible.builtin.include_tasks: configure.yml
+
+    - name: Secure Boot | Religar a VM (estava ligada antes)
+      ansible.builtin.include_tasks: power_on.yml
+      when: secureboot_vm_was_running | bool
+
+  rescue:
+    - name: Secure Boot | Registrar o erro original
+      ansible.builtin.set_fact:
+        secureboot_error: "{{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+        secureboot_failed_task: "{{ ansible_failed_task.name | default('desconhecida') }}"
+
+    - name: Secure Boot | Tentar restaurar a energia da VM após a falha
+      ansible.builtin.include_tasks: power_on.yml
+      when: secureboot_vm_was_running | bool
+
+    - name: Secure Boot | Interromper a execução com o erro original
+      ansible.builtin.fail:
+        msg:
+          - "Falha na tarefa: {{ secureboot_failed_task }}"
+          - "Erro: {{ secureboot_error }}"
+          - "{{ 'A VM foi religada (estado original restaurado).' if secureboot_vm_was_running | bool else 'A VM estava desligada e permanece desligada.' }}"
+          - "Verifique a configuração da VM no console antes de tentar novamente."
+
+- name: Secure Boot | Resumo da execução
+  ansible.builtin.import_tasks: report.yml

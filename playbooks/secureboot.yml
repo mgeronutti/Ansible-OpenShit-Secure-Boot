@@ -1,0 +1,57 @@
+---
+# =============================================================================
+# Playbook: secureboot.yml
+# -----------------------------------------------------------------------------
+# Ativa ou desativa o Secure Boot de uma VM do OpenShift Virtualization.
+#
+# Fluxo (cada etapa é uma role, executada nesta ordem):
+#   1. common                  -> descobre o nome da VM e valida a entrada
+#                                 do analista (enable/disable)
+#   2. openshift_prerequisites -> testa a conexão com o cluster e confirma
+#                                 que o OpenShift Virtualization existe
+#   3. secureboot              -> lê o estado da VM, desliga se necessário,
+#                                 altera o Secure Boot e religa se ela
+#                                 estava ligada
+#
+# Execução no Ansible Automation Platform (forma oficial):
+#   Job Template apontando para este arquivo + Survey que define
+#   secureboot_action (enable/disable), vm_name e vm_namespace.
+#   A conexão com o cluster vem da credencial "OpenShift or Kubernetes API
+#   Bearer Token". Passo a passo em docs/aap-configuracao.md.
+#
+# Execução local (testes):
+#   ansible-playbook playbooks/secureboot.yml -e secureboot_action=enable
+#   ansible-playbook playbooks/secureboot.yml -e secureboot_action=disable
+#   Opcionais: -e vm_name=<nome>  -e vm_namespace=<projeto>
+#              -i inventories/production/hosts.yml   (padrão: development)
+# =============================================================================
+
+- name: Gerenciar Secure Boot de VM no OpenShift Virtualization
+  # As ações são chamadas à API do OpenShift; rodamos na máquina local.
+  hosts: localhost
+  connection: local
+  # Fatos do sistema local (CPU, discos...) não são necessários.
+  gather_facts: false
+
+  # module_defaults injeta os parâmetros de conexão em TODOS os módulos da
+  # collection kubernetes.core (k8s, k8s_info, k8s_cluster_info...), evitando
+  # repetir host/token/validate_certs em cada tarefa.
+  #
+  # Quando a variável não está definida (ou está vazia), "omit" remove o
+  # parâmetro e o módulo usa, nesta ordem:
+  #   1. variáveis de ambiente K8S_AUTH_HOST, K8S_AUTH_API_KEY,
+  #      K8S_AUTH_VERIFY_SSL, K8S_AUTH_SSL_CA_CERT -> é assim que a credencial
+  #      "OpenShift or Kubernetes API Bearer Token" do AAP entrega os dados
+  #   2. o kubeconfig (~/.kube/config, sessão do "oc login") -> uso local
+  # Por isso, no AAP, NÃO defina openshift_* em variáveis: deixe a credencial
+  # cuidar da conexão.
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ openshift_api_url | default(omit, true) }}"
+      api_key: "{{ openshift_api_key | default(omit, true) }}"
+      validate_certs: "{{ openshift_validate_certs | default(omit) }}"
+
+  roles:
+    - role: common
+    - role: openshift_prerequisites
+    - role: secureboot

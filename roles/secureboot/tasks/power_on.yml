@@ -1,0 +1,93 @@
+---
+# =============================================================================
+# Etapa 4 - Religar a VM
+# -----------------------------------------------------------------------------
+# Só é chamada quando a VM estava ligada no início (ver main.yml). Se estava
+# desligada, ela permanece desligada.
+#
+# Também é usada pelo "rescue" do main.yml para restaurar a energia caso
+# alguma etapa falhe.
+#
+# Objetivo: devolver o controle de energia EXATAMENTE ao valor original.
+#   - spec.running        -> volta para true
+#   - runStrategy Always / RerunOnFailure / Once -> volta ao valor original
+#   - runStrategy Manual  -> caso especial (abaixo)
+#
+# Por que Manual é especial? Com Manual, o OpenShift não liga a VM sozinho.
+# Então ligamos temporariamente com Always, esperamos a VM subir e depois
+# gravamos Manual de novo. Com Manual, mudar o campo NÃO desliga a VM.
+# =============================================================================
+
+- name: Ligar | Definir o runStrategy usado para ligar
+  ansible.builtin.set_fact:
+    secureboot_start_strategy: >-
+      {{ secureboot_original_run_strategy
+         if secureboot_original_run_strategy in ['Always', 'RerunOnFailure', 'Once']
+         else 'Always' }}
+
+- name: Ligar | Solicitar inicialização via spec.running=true (formato antigo)
+  kubernetes.core.k8s:
+    state: patched
+    merge_type: merge
+    definition:
+      apiVersion: "{{ secureboot_kubevirt_api }}"
+      kind: VirtualMachine
+      metadata:
+        name: "{{ common_vm_name }}"
+        namespace: "{{ secureboot_vm_namespace }}"
+      spec:
+        running: true
+  when: secureboot_uses_running_field | bool
+
+- name: Ligar | Solicitar inicialização via runStrategy={{ secureboot_start_strategy }}
+  kubernetes.core.k8s:
+    state: patched
+    merge_type: merge
+    definition:
+      apiVersion: "{{ secureboot_kubevirt_api }}"
+      kind: VirtualMachine
+      metadata:
+        name: "{{ common_vm_name }}"
+        namespace: "{{ secureboot_vm_namespace }}"
+      spec:
+        runStrategy: "{{ secureboot_start_strategy }}"
+  when: not secureboot_uses_running_field | bool
+
+# Aguarda até o OpenShift reportar a VM como "Running" e "ready" (pod da VM
+# no ar e máquina virtual iniciada). Observação: "ready" significa que a VM
+# foi iniciada pelo hypervisor; o Windows ainda pode estar no processo de boot.
+- name: Ligar | Aguardar a VM ficar pronta (até {{ secureboot_wait_timeout }}s)
+  kubernetes.core.k8s_info:
+    api_version: "{{ secureboot_kubevirt_api }}"
+    kind: VirtualMachine
+    name: "{{ common_vm_name }}"
+    namespace: "{{ secureboot_vm_namespace }}"
+  register: secureboot_vm_wait
+  until:
+    - secureboot_vm_wait.resources | length == 1
+    - secureboot_vm_wait.resources[0].status.printableStatus | default('') == 'Running'
+    - secureboot_vm_wait.resources[0].status.ready | default(false) | bool
+  retries: "{{ secureboot_wait_retries }}"
+  delay: "{{ secureboot_wait_delay }}"
+  when: not ansible_check_mode
+
+# Caso Manual: com a VM já ligada, devolvemos o runStrategy original.
+- name: Ligar | Restaurar runStrategy original (Manual)
+  kubernetes.core.k8s:
+    state: patched
+    merge_type: merge
+    definition:
+      apiVersion: "{{ secureboot_kubevirt_api }}"
+      kind: VirtualMachine
+      metadata:
+        name: "{{ common_vm_name }}"
+        namespace: "{{ secureboot_vm_namespace }}"
+      spec:
+        runStrategy: Manual
+  when:
+    - not secureboot_uses_running_field | bool
+    - secureboot_original_run_strategy == 'Manual'
+
+- name: Ligar | VM religada
+  ansible.builtin.debug:
+    msg: "VM {{ secureboot_vm_namespace }}/{{ common_vm_name }} religada."

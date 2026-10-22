@@ -1,0 +1,4 @@
+# Bibliotecas Python usadas pela collection kubernetes.core.
+# - AAP: incluída no Execution Environment (ver execution-environment.yml)
+# - Local: pip install ansible-core -r requirements.txt
+kubernetes>=24.2.0

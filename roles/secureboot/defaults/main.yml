@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# Valores padrão da role secureboot (podem ser sobrescritos com -e)
+# =============================================================================
+
+# Tempo máximo (segundos) para aguardar a VM desligar ou ligar.
+# O Windows recebe um sinal de desligamento ACPI e tem até
+# terminationGracePeriodSeconds (definido na VM, normalmente 180s ou 3600s)
+# para encerrar. Ajuste este valor para algo MAIOR que esse período.
+secureboot_wait_timeout: 900
+
+# Intervalo (segundos) entre cada verificação de estado durante a espera.
+secureboot_wait_delay: 10

@@ -1,0 +1,85 @@
+---
+# =============================================================================
+# Role: common
+# -----------------------------------------------------------------------------
+# Responsável por tudo que vem ANTES de falar com o OpenShift:
+#   1. Descobrir qual VM será alterada (nome e namespace)
+#   2. Validar os parâmetros informados pelo analista
+#
+# Fatos produzidos (usados pela role secureboot):
+#   common_vm_name       -> nome da VM
+#   common_vm_namespace  -> namespace informado ("" = procurar em todos)
+#   common_secureboot_desired -> true (ativar) / false (desativar)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Origem do nome da VM
+# -----------------------------------------------------------------------------
+# Hoje o nome vem da variável vm_name (fixa em group_vars/all/vm.yml ou
+# passada com -e vm_name=...).
+#
+# INTEGRAÇÃO FUTURA com o sistema interno: substitua a tarefa abaixo por uma
+# consulta ao sistema e grave o resultado em common_vm_name. Exemplo:
+#
+# - name: Common | Consultar o nome da VM no sistema interno
+#   ansible.builtin.uri:
+#     url: "https://sistema-interno.empresa.local/api/vms/{{ ticket_id }}"
+#     headers:
+#       Authorization: "Bearer {{ vault_sistema_interno_token }}"
+#     return_content: true
+#   register: common_internal_lookup
+#
+# - name: Common | Usar o nome retornado pelo sistema interno
+#   ansible.builtin.set_fact:
+#     common_vm_name: "{{ common_internal_lookup.json.hostname }}"
+#     common_vm_namespace: "{{ common_internal_lookup.json.namespace | default('') }}"
+# -----------------------------------------------------------------------------
+- name: Common | Definir a VM alvo (nome fixo por enquanto)
+  ansible.builtin.set_fact:
+    common_vm_name: "{{ vm_name | default('win11-amber-heron-89', true) | trim }}"
+    common_vm_namespace: "{{ vm_namespace | default('', true) | trim }}"
+
+# -----------------------------------------------------------------------------
+# 2. Validação do nome
+# -----------------------------------------------------------------------------
+# Nomes de objetos no OpenShift seguem o padrão DNS-1123: letras minúsculas,
+# números e hífen, começando e terminando com letra/número, até 63 caracteres.
+# Validar aqui evita mandar um nome inválido (ou malicioso) para a API.
+- name: Common | Validar o nome e o namespace da VM
+  ansible.builtin.assert:
+    that:
+      - common_vm_name is match('^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$')
+      - common_vm_namespace == '' or common_vm_namespace is match('^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$')
+    fail_msg: >-
+      Nome de VM ou namespace inválido (vm_name='{{ common_vm_name }}',
+      vm_namespace='{{ common_vm_namespace }}'). Use apenas letras minúsculas,
+      números e hífen (máx. 63 caracteres).
+    quiet: true
+
+# -----------------------------------------------------------------------------
+# 3. Validação da ação escolhida pelo analista
+# -----------------------------------------------------------------------------
+# Aceita "enable"/"disable" (sem diferenciar maiúsculas). Qualquer outro
+# valor, ou ausência do parâmetro, interrompe o playbook ANTES de tocar na VM.
+- name: Common | Validar a ação de Secure Boot informada pelo analista
+  ansible.builtin.assert:
+    that:
+      - (secureboot_action | default('') | lower | trim) in ['enable', 'disable']
+    fail_msg: >-
+      Informe a ação desejada com -e secureboot_action=enable (ativar)
+      ou -e secureboot_action=disable (desativar).
+      Valor recebido: '{{ secureboot_action | default('') }}'.
+    quiet: true
+
+# Converte a ação em booleano: é com esse valor que o estado atual da VM
+# será comparado.
+- name: Common | Converter a ação em valor booleano
+  ansible.builtin.set_fact:
+    common_secureboot_desired: "{{ (secureboot_action | lower | trim) == 'enable' }}"
+
+- name: Common | Exibir o que será feito
+  ansible.builtin.debug:
+    msg:
+      - "VM alvo ........: {{ common_vm_name }}"
+      - "Namespace ......: {{ common_vm_namespace if common_vm_namespace else '(procurar em todos)' }}"
+      - "Ação solicitada : {{ 'ATIVAR' if common_secureboot_desired | bool else 'DESATIVAR' }} Secure Boot"

@@ -1,0 +1,39 @@
+---
+# =============================================================================
+# Definição do Execution Environment (EE) para o Ansible Automation Platform
+# -----------------------------------------------------------------------------
+# O EE é a imagem de container onde o AAP executa o playbook. Ela precisa ter:
+#   - a collection kubernetes.core
+#   - a biblioteca Python kubernetes
+#
+# Antes de construir: verifique se o EE "supported" do seu AAP já atende
+# (normalmente já traz kubernetes.core). Se sim, este arquivo não é necessário.
+#
+# Construir e publicar (em uma máquina com podman e ansible-builder):
+#   podman login registry.redhat.io
+#   ansible-builder build -t <registry>/<org>/ee-openshift-secureboot:1.0 -f execution-environment.yml
+#   podman push <registry>/<org>/ee-openshift-secureboot:1.0
+#
+# Depois cadastre a imagem no AAP em:
+#   Automation Execution > Infrastructure > Execution Environments
+# =============================================================================
+version: 3
+
+images:
+  base_image:
+    # Ajuste a versão para a do seu AAP (ex.: ansible-automation-platform-24)
+    name: registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9:latest
+
+dependencies:
+  galaxy: collections/requirements.yml
+  python: requirements.txt
+  # ansible-core e ansible-runner já vêm na imagem base
+
+# Se a construção não conseguir baixar a collection (ambiente sem acesso à
+# internet ou uso obrigatório do Automation Hub / Private Hub), adicione um
+# ansible.cfg com os servidores Galaxy da empresa em:
+# additional_build_files:
+#   - src: ansible.cfg.builder
+#     dest: configs
+# e em additional_build_steps.prepend_galaxy:
+#   - ADD _build/configs/ansible.cfg.builder /etc/ansible/ansible.cfg

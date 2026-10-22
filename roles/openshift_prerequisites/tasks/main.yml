@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# Role: openshift_prerequisites
+# -----------------------------------------------------------------------------
+# Garante que o Ansible consegue falar com o OpenShift ANTES de qualquer
+# alteração. Se algo falhar aqui, nenhuma VM foi tocada.
+#
+# Verifica:
+#   1. Biblioteca Python "kubernetes" instalada
+#   2. Autenticação e conectividade com a API do cluster
+#   3. OpenShift Virtualization (KubeVirt) instalado no cluster
+# =============================================================================
+
+- name: Prerequisitos | Exibir o destino da conexão
+  ansible.builtin.debug:
+    msg: >-
+      Conectando em:
+      {{ openshift_api_url if (openshift_api_url | default('', true))
+         else (lookup('ansible.builtin.env', 'K8S_AUTH_HOST') ~ ' (credencial do AAP)'
+               if lookup('ansible.builtin.env', 'K8S_AUTH_HOST')
+               else 'contexto atual do kubeconfig (oc login)') }}
+
+# k8s_cluster_info faz a "descoberta" da API: conecta, autentica e lista
+# todos os tipos de recurso disponíveis. É uma chamada somente-leitura, ideal
+# para validar a conexão. O block/rescue troca a mensagem de erro técnica do
+# módulo por uma orientação clara ao analista.
+- name: Prerequisitos | Testar conexão e autenticação com o cluster
+  block:
+    - name: Prerequisitos | Consultar informações do cluster
+      kubernetes.core.k8s_cluster_info:
+      register: openshift_prerequisites_cluster
+
+  rescue:
+    - name: Prerequisitos | Falha ao conectar no OpenShift
+      ansible.builtin.fail:
+        msg:
+          - "Não foi possível conectar na API do OpenShift."
+          - "Erro retornado: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+          - "Verifique:"
+          - " - AAP: credencial 'OpenShift or Kubernetes API Bearer Token' associada ao Job Template (URL, token, Verify SSL/CA)"
+          - " - AAP: Execution Environment com kubernetes.core e a biblioteca Python kubernetes"
+          - " - Local: pip install -r requirements.txt e sessão ativa (oc whoami)"
+
+- name: Prerequisitos | Exibir versão do cluster
+  ansible.builtin.debug:
+    msg: "Conectado. Versão do Kubernetes: {{ openshift_prerequisites_cluster.version.server.kubernetes.gitVersion | default('desconhecida') }}"
+
+# O OpenShift Virtualization registra o grupo de API "kubevirt.io/v1" com o
+# tipo VirtualMachine. Se ele não existir, o operador não está instalado
+# (ou o usuário não tem permissão para enxergá-lo).
+- name: Prerequisitos | Confirmar que o OpenShift Virtualization está disponível
+  ansible.builtin.assert:
+    that:
+      - "'VirtualMachine' in (openshift_prerequisites_cluster.apis['kubevirt.io/v1'] | default({}))"
+    fail_msg: >-
+      A API kubevirt.io/v1 (OpenShift Virtualization) não foi encontrada neste
+      cluster. Confirme se o operador está instalado e se o usuário tem acesso.
+    success_msg: "OpenShift Virtualization disponível (kubevirt.io/v1)."

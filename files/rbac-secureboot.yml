@@ -1,0 +1,50 @@
+---
+# =============================================================================
+# Permissões mínimas para a ServiceAccount usada pela automação de Secure Boot.
+#
+# Aplicar:
+#   oc apply -f files/rbac-secureboot.yml
+#
+# Gerar token para colocar no vault:
+#   oc create token ansible-secureboot -n ansible-automation --duration=8760h
+#
+# Ajuste os namespaces conforme o seu ambiente. Para limitar o acesso a um
+# único projeto, troque o ClusterRoleBinding por um RoleBinding nesse
+# namespace (e, nesse caso, sempre informe vm_namespace no playbook).
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ansible-secureboot
+  namespace: ansible-automation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ansible-secureboot
+rules:
+  # Ler a VM, ligar/desligar (runStrategy/running) e alterar o firmware
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachines"]
+    verbs: ["get", "list", "patch"]
+  # Saber se a VM está em execução
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances"]
+    verbs: ["get", "list"]
+  # Ler o firmware herdado por VMs criadas a partir de InstanceType
+  - apiGroups: ["instancetype.kubevirt.io"]
+    resources: ["virtualmachineclusterpreferences", "virtualmachinepreferences"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ansible-secureboot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ansible-secureboot
+subjects:
+  - kind: ServiceAccount
+    name: ansible-secureboot
+    namespace: ansible-automation

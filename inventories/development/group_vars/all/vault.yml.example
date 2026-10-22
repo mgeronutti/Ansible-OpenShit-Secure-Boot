@@ -1,0 +1,11 @@
+---
+# Modelo do arquivo de segredos.
+#
+# 1. Copie para vault.yml (mesmo diretório)
+# 2. Coloque o token real
+# 3. Criptografe:  ansible-vault encrypt inventories/<ambiente>/group_vars/all/vault.yml
+# 4. Rode o playbook com --ask-vault-pass (ou --vault-password-file)
+#
+# Como obter um token de ServiceAccount:
+#   oc create token <service-account> -n <namespace> --duration=8760h
+vault_openshift_api_key: "sha256~COLOQUE_O_TOKEN_AQUI"

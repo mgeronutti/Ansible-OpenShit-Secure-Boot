@@ -1,0 +1,10 @@
+# Collections instaladas via ansible-galaxy (reinstaláveis a partir de requirements.yml)
+collections/ansible_collections/
+
+# Logs de execução
+logs/*.log
+
+# Nunca versionar credenciais em texto puro
+**/vault.yml
+!**/vault.yml.example
+.vault_pass*

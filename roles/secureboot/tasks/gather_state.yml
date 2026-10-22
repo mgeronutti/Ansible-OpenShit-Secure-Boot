@@ -1,0 +1,197 @@
+---
+# =============================================================================
+# Etapa 1 - Levantar o estado atual da VM (somente leitura)
+# -----------------------------------------------------------------------------
+# Conceitos do OpenShift Virtualization usados aqui:
+#
+#   VirtualMachine (VM)
+#     Objeto PERMANENTE com a configuração da máquina (CPU, memória, discos,
+#     firmware...). Existe esteja a máquina ligada ou desligada.
+#
+#   VirtualMachineInstance (VMI)
+#     Objeto TEMPORÁRIO que representa a máquina EM EXECUÇÃO. Ele é criado
+#     quando a VM liga e apagado quando ela desliga. Por isso:
+#         existe VMI  -> VM ligada
+#         não existe  -> VM desligada
+#
+#   Secure Boot fica em:
+#     spec.template.spec.domain.firmware.bootloader.efi.secureBoot
+#     - bootloader "efi" sem secureBoot explícito => Secure Boot ATIVO
+#       (padrão do KubeVirt)
+#     - bootloader "bios" (ou nenhum bootloader)   => sem Secure Boot
+#     - VMs criadas por InstanceType podem não ter firmware na própria VM e
+#       herdá-lo de uma "preference" (ex.: windows.11). Esse caso é tratado.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1.1 Localizar a VM
+# -----------------------------------------------------------------------------
+# O field_selector "metadata.name=<nome>" filtra pelo nome exato. Se o
+# namespace não foi informado, "omit" remove o parâmetro e a busca ocorre em
+# TODOS os namespaces que o usuário pode ler.
+- name: Estado | Localizar a VirtualMachine {{ common_vm_name }}
+  kubernetes.core.k8s_info:
+    api_version: "{{ secureboot_kubevirt_api }}"
+    kind: VirtualMachine
+    namespace: "{{ common_vm_namespace | default(omit, true) }}"
+    field_selectors:
+      - "metadata.name={{ common_vm_name }}"
+  register: secureboot_vm_lookup
+
+# Exatamente uma VM precisa ser encontrada. Zero = nome errado/sem acesso.
+# Mais de uma = o mesmo nome existe em namespaces diferentes; o analista
+# precisa informar vm_namespace para evitar alterar a VM errada.
+- name: Estado | Garantir que exatamente uma VM foi encontrada
+  ansible.builtin.assert:
+    that:
+      - secureboot_vm_lookup.resources | length == 1
+    fail_msg: >-
+      {% if secureboot_vm_lookup.resources | length == 0 %}
+      VM '{{ common_vm_name }}' não encontrada
+      {{ 'no namespace ' ~ common_vm_namespace if common_vm_namespace else 'em nenhum namespace acessível' }}.
+      {% else %}
+      Existem {{ secureboot_vm_lookup.resources | length }} VMs chamadas
+      '{{ common_vm_name }}' nos namespaces
+      {{ secureboot_vm_lookup.resources | map(attribute='metadata.namespace') | join(', ') }}.
+      Informe qual usar com -e vm_namespace=<namespace>.
+      {% endif %}
+    quiet: true
+
+# Guardamos a VM e extraímos os pedaços que importam, para não repetir
+# caminhos longos no resto do código.
+- name: Estado | Extrair a configuração da VM
+  ansible.builtin.set_fact:
+    secureboot_vm: "{{ secureboot_vm_lookup.resources[0] }}"
+    secureboot_vm_namespace: "{{ secureboot_vm_lookup.resources[0].metadata.namespace }}"
+    # Status mostrado no console (Running, Stopped, Starting, Stopping...)
+    secureboot_vm_status: "{{ secureboot_vm_lookup.resources[0].status.printableStatus | default('Desconhecido') }}"
+    # Bootloader definido diretamente na VM ({} se não houver)
+    secureboot_bootloader: >-
+      {{ ((secureboot_vm_lookup.resources[0].spec.template.spec.domain.firmware | default({}, true)).bootloader) | default({}, true) }}
+
+# -----------------------------------------------------------------------------
+# 1.2 Como a VM controla liga/desliga
+# -----------------------------------------------------------------------------
+# Uma VM usa UM de dois campos (nunca os dois):
+#   spec.running: true/false   -> formato antigo (obsoleto)
+#   spec.runStrategy: <valor>  -> formato atual. Valores:
+#       Always          liga e mantém ligada
+#       RerunOnFailure  liga e religa só se falhar
+#       Manual          só liga/desliga por comando explícito
+#       Halted          desligada
+#       Once            liga uma única vez
+# Precisamos saber qual é usado para desligar/religar pelo mesmo campo e,
+# no final, devolver exatamente o valor original.
+- name: Estado | Identificar o controle de energia da VM
+  ansible.builtin.set_fact:
+    secureboot_uses_running_field: "{{ secureboot_vm.spec.running is defined and secureboot_vm.spec.running is not none }}"
+    secureboot_original_run_strategy: "{{ secureboot_vm.spec.runStrategy | default('') }}"
+
+# -----------------------------------------------------------------------------
+# 1.3 A VM está ligada?
+# -----------------------------------------------------------------------------
+- name: Estado | Verificar se existe uma instância em execução (VMI)
+  kubernetes.core.k8s_info:
+    api_version: "{{ secureboot_kubevirt_api }}"
+    kind: VirtualMachineInstance
+    name: "{{ common_vm_name }}"
+    namespace: "{{ secureboot_vm_namespace }}"
+  register: secureboot_vmi_lookup
+
+- name: Estado | Registrar se a VM estava ligada
+  ansible.builtin.set_fact:
+    secureboot_vm_was_running: "{{ secureboot_vmi_lookup.resources | length > 0 }}"
+
+# -----------------------------------------------------------------------------
+# 1.4 Qual o estado atual do Secure Boot?
+# -----------------------------------------------------------------------------
+# Caso A: a VM não declara bootloader e usa uma preference (InstanceType).
+#         O firmware real vem da preference, então lemos ela.
+#         kind padrão quando omitido: VirtualMachineClusterPreference (do
+#         cluster); VirtualMachinePreference fica no namespace da VM.
+- name: Estado | Ler a preference (InstanceType) que define o firmware da VM
+  kubernetes.core.k8s_info:
+    api_version: "{{ secureboot_preference_api }}"
+    kind: "{{ secureboot_pref_kind }}"
+    name: "{{ secureboot_vm.spec.preference.name }}"
+    namespace: "{{ secureboot_vm_namespace if secureboot_pref_kind == 'VirtualMachinePreference' else omit }}"
+  vars:
+    secureboot_pref_kind: >-
+      {{ 'VirtualMachinePreference'
+         if (secureboot_vm.spec.preference.kind | default('') | lower) == 'virtualmachinepreference'
+         else 'VirtualMachineClusterPreference' }}
+  register: secureboot_preference_lookup
+  when:
+    - secureboot_bootloader | length == 0
+    - secureboot_vm.spec.preference.name is defined
+
+# Valores padrão: sem bootloader e sem preference = BIOS (sem Secure Boot).
+- name: Estado | Assumir firmware padrão (BIOS)
+  ansible.builtin.set_fact:
+    secureboot_firmware_type: bios
+    secureboot_firmware_source: "padrão do KubeVirt"
+    secureboot_current_efi: {}
+
+# Caso B: bootloader declarado na própria VM (o mais comum em VMs criadas
+#         por template, como as Windows 11 do OpenShift).
+- name: Estado | Firmware definido na própria VM
+  ansible.builtin.set_fact:
+    secureboot_firmware_type: "{{ 'efi' if 'efi' in secureboot_bootloader else 'bios' }}"
+    secureboot_firmware_source: "VM (spec.template)"
+    secureboot_current_efi: "{{ secureboot_bootloader.efi | default({}, true) }}"
+  when: secureboot_bootloader | length > 0
+
+# Caso A (continuação): firmware herdado da preference.
+#   preferredEfi                      -> formato atual
+#   preferredUseEfi/UseSecureBoot     -> formato antigo
+- name: Estado | Firmware herdado da preference
+  ansible.builtin.set_fact:
+    secureboot_firmware_type: "{{ 'efi' if (secureboot_pref_fw.preferredEfi is defined or secureboot_pref_fw.preferredUseEfi | default(false) | bool) else 'bios' }}"
+    secureboot_firmware_source: "preference {{ secureboot_vm.spec.preference.name }}"
+    secureboot_current_efi: >-
+      {{ secureboot_pref_fw.preferredEfi
+         | default({'secureBoot': secureboot_pref_fw.preferredUseSecureBoot | default(true) | bool}, true) }}
+  vars:
+    secureboot_pref_fw: "{{ (secureboot_preference_lookup.resources | default([]) | first | default({})).spec.firmware | default({}) }}"
+  when:
+    - secureboot_bootloader | length == 0
+    - secureboot_preference_lookup.resources | default([]) | length > 0
+
+# Secure Boot só existe com EFI. Se "secureBoot" não estiver escrito, o
+# KubeVirt considera true.
+- name: Estado | Calcular se a alteração é necessária
+  ansible.builtin.set_fact:
+    secureboot_current_enabled: >-
+      {{ secureboot_firmware_type == 'efi' and (secureboot_current_efi.secureBoot | default(true) | bool) }}
+
+- name: Estado | Comparar estado atual com o desejado
+  ansible.builtin.set_fact:
+    secureboot_change_required: "{{ (secureboot_current_enabled | bool) != (common_secureboot_desired | bool) }}"
+
+- name: Estado | Exibir o diagnóstico da VM
+  ansible.builtin.debug:
+    msg:
+      - "VM ..................: {{ secureboot_vm_namespace }}/{{ common_vm_name }}"
+      - "Status ..............: {{ secureboot_vm_status }}"
+      - "Ligada (VMI existe) .: {{ 'SIM' if secureboot_vm_was_running | bool else 'NÃO' }}"
+      - "Controle de energia .: {{ 'spec.running=' ~ secureboot_vm.spec.running if secureboot_uses_running_field | bool else 'runStrategy=' ~ secureboot_original_run_strategy }}"
+      - "Firmware ............: {{ secureboot_firmware_type | upper }} (origem: {{ secureboot_firmware_source }})"
+      - "Secure Boot atual ...: {{ 'ATIVADO' if secureboot_current_enabled | bool else 'DESATIVADO' }}"
+      - "Secure Boot desejado : {{ 'ATIVADO' if common_secureboot_desired | bool else 'DESATIVADO' }}"
+      - "Alteração necessária : {{ 'SIM' if secureboot_change_required | bool else 'NÃO' }}"
+
+# Secure Boot só funciona com EFI. Trocar BIOS por EFI impede o sistema já
+# instalado de iniciar, então essa conversão NÃO é feita automaticamente.
+# A verificação fica aqui (antes de desligar) para não derrubar a VM à toa.
+- name: Estado | Bloquear ativação em VM com firmware BIOS
+  ansible.builtin.assert:
+    that:
+      - secureboot_firmware_type == 'efi'
+    fail_msg: >-
+      A VM {{ common_vm_name }} usa firmware BIOS. Secure Boot só funciona com
+      EFI, e converter BIOS -> EFI impede o sistema instalado de iniciar.
+      Nenhuma alteração foi feita (a VM não foi desligada).
+    quiet: true
+  when:
+    - secureboot_change_required | bool
+    - common_secureboot_desired | bool
